@@ -49,6 +49,7 @@ class AutocompleteUsers(Component):
         """
 
         query = req.args.get('q', '').lower()
+        want_groups = req.args.get('groups')
         chrome = Chrome(self.env)
 
         ### user names, email addressess, full names
@@ -76,11 +77,20 @@ class AutocompleteUsers(Component):
                         users.append((2-index, user_data)) # 2-index is the sort key
                         break
 
-            
+        if want_groups:
+            # TODO - probably should be elsewhere
+            db = self.env.get_db_cnx()
+            cursor = db.cursor()
+            cursor.execute("SELECT DISTINCT username FROM permission WHERE username like '@%'")
+            groups = sorted(['%s||group' % row[0] for row in cursor 
+                             if row[0].startswith('@%s' % query)])
+                        
         users = [ '%s|%s|%s' % (user[USER], 
                                  user[EMAIL] and '&lt;%s&gt; ' % user[EMAIL] or '',
                                  user[NAME])
                   for value, user in sorted(users) ] # value unused (placeholder need for sorting)
+        if want_groups and groups:
+            users.extend(groups)
 
         req.send('\n'.join(users).encode('utf-8'), 'text/plain')
 
@@ -125,19 +135,23 @@ class AutocompleteUsers(Component):
 
         (Since 0.11)
         """
-        if template == 'ticket.html':
+        if template in ('ticket.html', 'admin_perms.html'):
             add_stylesheet(req, '%s/css/autocomplete.css' % self.prefix)
             add_script(req, '%s/js/autocomplete.js' % self.prefix)
             restrict_owner = self.env.config.getbool('ticket', 'restrict_owner')
             add_script(req, '%s/js/format_item.js' % self.prefix)
-            if req.path_info.rstrip() == '/newticket':
-                add_script(req, '%s/js/autocomplete_newticket_cc.js' % self.prefix)
-                if not restrict_owner:
-                    add_script(req, '%s/js/autocomplete_newticket.js' % self.prefix)
-            else:
-                add_script(req, '%s/js/autocomplete_ticket_cc.js' % self.prefix)
-                if not restrict_owner:
-                    add_script(req, '%s/js/autocomplete_ticket.js' % self.prefix)
+            if template == 'ticket.html':
+                if req.path_info.rstrip() == '/newticket':
+                    add_script(req, '%s/js/autocomplete_newticket_cc.js' % self.prefix)
+                    if not restrict_owner:
+                        add_script(req, '%s/js/autocomplete_newticket.js' % self.prefix)
+                else:
+                    add_script(req, '%s/js/autocomplete_ticket_cc.js' % self.prefix)
+                    if not restrict_owner:
+                        add_script(req, '%s/js/autocomplete_ticket.js' % self.prefix)
+            elif template == 'admin_perms.html':
+                add_script(req, '%s/js/autocomplete_perms.js' % self.prefix)
+        
         return (template, data, content_type)
 
     def pre_process_request(self, req, handler):
