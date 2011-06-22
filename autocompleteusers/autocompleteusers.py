@@ -10,6 +10,7 @@ from pkg_resources import resource_filename
 from trac.core import *
 
 from trac.config import ListOption
+from trac.perm import PermissionError, PermissionSystem
 from trac.web.api import IRequestFilter
 from trac.web.api import IRequestHandler
 from trac.web.chrome import add_script
@@ -50,18 +51,25 @@ class AutocompleteUsers(Component):
 
         query = req.args.get('q', '').lower()
         want_groups = req.args.get('groups')
+
+        if want_groups:
+            req.perm.require('PERMISSION_GRANT')
+        if 'TICKET_CREATE' not in req.perm and 'TICKET_MODIFY' not in req.perm:
+            raise PermissionError(env=self.env)
+
+        if len(query) < 2:
+            req.send('', 'text/plain')
+            return
+
         chrome = Chrome(self.env)
 
         ### user names, email addressess, full names
         users = []
-        USER=0; NAME=1; EMAIL=2 # indices 
+        USER = 0; NAME = 1; EMAIL = 2 # indices
 
-        # instead of known_users, could be
-        # perm = PermissionSystem(self.env)
-        # owners = perm.get_users_with_permission('TICKET_MODIFY')
-        # owners.sort()
-        # see: http://trac.edgewall.org/browser/trunk/trac/ticket/default_workflow.py#L232
+        perm = PermissionSystem(self.env)
 
+        groups = set()
         for user_data in self.env.get_known_users(): 
             user_data = [ i is not None and chrome.format_author(req, i) or ''
                           for i in user_data ]
@@ -76,24 +84,22 @@ class AutocompleteUsers(Component):
                     if sum(name.startswith(query) for name in lastnames):
                         users.append((2-index, user_data)) # 2-index is the sort key
                         break
+            for provider in perm.store.group_providers:
+                groups.update(provider.get_permission_groups(user_data[USER]))
 
-        if want_groups:
-            # TODO - probably should be elsewhere
-            db = self.env.get_db_cnx()
-            cursor = db.cursor()
-            cursor.execute("SELECT DISTINCT username FROM permission WHERE username like '@%'")
-            groups = sorted(['%s||group' % row[0] for row in cursor 
-                             if row[0].startswith('@%s' % query)])
-                        
+        groups = sorted(['%s||group' % (group,) for group in groups if group.lower().startswith(query)])
+        
         users = [ '%s|%s|%s' % (user[USER], 
-                                 user[EMAIL] and '&lt;%s&gt; ' % user[EMAIL] or '',
+                                 user[EMAIL] and '&lt;%s&gt;' % user[EMAIL] or '',
                                  user[NAME])
                   for value, user in sorted(users) ] # value unused (placeholder need for sorting)
+
         if want_groups and groups:
             users.extend(groups)
 
-        req.send('\n'.join(users).encode('utf-8'), 'text/plain')
+        users = users[:3] # Limit only to three results
 
+        req.send('\n'.join(users).encode('utf-8'), 'text/plain')
 
     ### methods for ITemplateProvider
 
