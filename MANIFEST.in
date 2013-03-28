@@ -1,0 +1,2 @@
+recursive-include autocompleteusers/htdocs *
+include *.py
